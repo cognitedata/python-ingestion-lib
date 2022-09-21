@@ -1,7 +1,6 @@
 import math
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -10,7 +9,6 @@ from cognite.client.data_classes.time_series import TimeSeries
 from cognite.client.exceptions import CogniteAPIError, CogniteNotFoundError
 from dateutil.parser import parse
 
-from .data_types import IngestDatapoint
 from .retry import retry
 
 
@@ -140,10 +138,9 @@ class AbstractUploadQueue(ABC):
             self.upload()
 
 
-@dataclass
-class DataPoint:
-    value: Union[str, int, float]
-    timestamp: float
+DataPoint = Dict[str, Union[int, float, str, datetime]]
+
+DataPointList = List[DataPoint]
 
 
 MIN_DATAPOINT_TIMESTAMP = 31536000000
@@ -222,16 +219,16 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
         Returns:
             A TimeSeries object with external_id set, and the is_string automatically detected
         """
-        is_string = isinstance(datapoints[0].value, str)
+        is_string = isinstance(datapoints[0]["value"], str)
         return TimeSeries(external_id=external_id, is_string=is_string, data_set_id=self.data_set_id)
 
     def _is_datapoint_valid(
         self,
         dp: DataPoint,
     ) -> bool:
-        return self._verify_datapoint_time(dp.timestamp) and self._verify_datapoint_value(dp.value)
+        return self._verify_datapoint_time(dp["timestamp"]) and self._verify_datapoint_value(dp["value"])  # type: ignore
 
-    def add_to_upload_queue(self, datapoints: Union[IngestDatapoint, List[IngestDatapoint]]) -> None:  # type: ignore
+    def add_to_upload_queue(self, datapoints: DataPointList) -> None:  # type: ignore
         """
         Add data points to upload queue. The queue will be uploaded if the queue size is larger than the threshold
         specified in the __init__.
@@ -246,25 +243,26 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
             if not isinstance(datapoints, list):
                 datapoints = [datapoints]
             for dp in datapoints:
-                if dp.externalId is None:
-                    dp.externalId = self.default_external_id
-                if dp.externalId is None:
+                external_id: str = dp["externalId"]  # type: ignore
+                if external_id is None:
+                    external_id = self.default_external_id
+                if external_id is None:
                     continue
 
-                timestamp = dp.timestamp
+                timestamp = dp["timestamp"]
                 if isinstance(timestamp, str):
                     timestamp = parse(timestamp, fuzzy=True).timestamp() * 1000.0
 
-                datapoint = DataPoint(timestamp=timestamp, value=dp.value)
+                datapoint = {"timestamp": timestamp, "value": dp["value"]}
 
                 if not self._is_datapoint_valid(datapoint):
                     continue
 
-                if dp.externalId not in self.upload_queue:
+                if external_id not in self.upload_queue:
                     new_len += 1
-                    self.upload_queue[dp.externalId] = [datapoint]
+                    self.upload_queue[external_id] = [datapoint]
                 else:
-                    self.upload_queue[dp.externalId].append(datapoint)
+                    self.upload_queue[external_id].append(datapoint)
 
             self._check_triggers()
 

@@ -54,3 +54,22 @@ class Ingester:
             return id.id
         else:
             return self.cdf_client.data_sets.retrieve(external_id=id.external_id).id
+
+    def __enter__(self) -> "Ingester":
+        """
+        Wraps around start method, for use as context manager
+        Returns:
+            self
+        """
+        self.upload_queue.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Wraps around stop method, for use as context manager
+        Args:
+            exc_type: Exception type
+            exc_val: Exception value
+            exc_tb: Traceback
+        """
+        self.upload_queue.__exit__(exc_type, exc_val, exc_tb)
