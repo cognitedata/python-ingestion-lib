@@ -34,4 +34,4 @@ line_length=120                # corresponds to -w  flag
 multi_line_output=3            # corresponds to -m  flag
 include_trailing_comma=true    # corresponds to -tc flag
 skip_glob = '^((?!py$).)*$'
-known_third_party=[]
+known_third_party=["dateutil", "decorator", "pyjq"]

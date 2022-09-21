@@ -1,23 +1,32 @@
-from abc import ABC, abstractmethod
-from datetime import datetime
-from enum import Enum
 import math
 import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
+
 from cognite.client import CogniteClient
 from cognite.client.data_classes.time_series import TimeSeries
-from cognite.client.exceptions import CogniteAPIError, CogniteDuplicatedError, CogniteNotFoundError, CogniteReadTimeout
-from .retry import retry
-from .data_types import IngestDatapoint
+from cognite.client.exceptions import CogniteAPIError, CogniteNotFoundError
 from dateutil.parser import parse
+
+from .data_types import IngestDatapoint
+from .retry import retry
+
 
 def _resolve_log_level(level: str) -> int:
     return {"NOTSET": 0, "DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}[level.upper()]
+
 
 RETRY_BACKOFF_FACTOR = 1.5
 RETRY_MAX_DELAY = 15
 RETRY_DELAY = 5
 RETRIES = 10
+
+
+def _default_log_callback(level: int, text: str):
+    pass
+
 
 class AbstractUploadQueue(ABC):
     """
@@ -53,8 +62,10 @@ class AbstractUploadQueue(ABC):
         self.cancelation_token: threading.Event = cancelation_token
 
         self.max_upload_interval = max_upload_interval
-
-        self.log_callback = log_callback
+        if log_callback is not None:
+            self.log_callback = log_callback
+        else:
+            self.log_callback = _default_log_callback
         self.metrics_callback = metrics_callback
         self.log_level = _resolve_log_level("DEBUG")
         self.error_level = _resolve_log_level("ERROR")
@@ -64,7 +75,10 @@ class AbstractUploadQueue(ABC):
         Check if upload triggers are met, call upload if they are. Called by subclasses.
         """
         if self.upload_queue_size > self.threshold >= 0:
-            self.log_callback(self.log_level, f"Upload queue reached threshold size {self.upload_queue_size}/{self.threshold}, triggering upload",)
+            self.log_callback(
+                self.log_level,
+                f"Upload queue reached threshold size {self.upload_queue_size}/{self.threshold}, triggering upload",
+            )
             return self.upload()
 
         return None
@@ -98,7 +112,9 @@ class AbstractUploadQueue(ABC):
                 self.log_callback(self.log_level, "Triggering scheduled upload")
                 self.upload()
             except Exception as e:
-                self.log_callback(self.error_level, f"Unexpected error while uploading: {str(e)}. Skipping this upload.")
+                self.log_callback(
+                    self.error_level, f"Unexpected error while uploading: {str(e)}. Skipping this upload."
+                )
 
         # trigger stop event explicitly to drain the queue
         self.stop(ensure_upload=True)
@@ -123,14 +139,18 @@ class AbstractUploadQueue(ABC):
         if ensure_upload:
             self.upload()
 
+
+@dataclass
 class DataPoint:
-    value: Union[int, float]
-    timestamp: datetime
+    value: Union[str, int, float]
+    timestamp: float
+
 
 MIN_DATAPOINT_TIMESTAMP = 31536000000
 MAX_DATAPOINT_STRING_LENGTH = 255
 MAX_DATAPOINT_VALUE = 1e100
 MIN_DATAPOINT_VALUE = -1e100
+
 
 class TimeSeriesUploadQueue(AbstractUploadQueue):
     """
@@ -202,11 +222,7 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
         Returns:
             A TimeSeries object with external_id set, and the is_string automatically detected
         """
-        is_string = (
-            isinstance(datapoints[0].get("value"), str)
-            if isinstance(datapoints[0], dict)
-            else isinstance(datapoints[0][1], str)
-        )
+        is_string = isinstance(datapoints[0].value, str)
         return TimeSeries(external_id=external_id, is_string=is_string, data_set_id=self.data_set_id)
 
     def _is_datapoint_valid(
@@ -215,7 +231,7 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
     ) -> bool:
         return self._verify_datapoint_time(dp.timestamp) and self._verify_datapoint_value(dp.value)
 
-    def add_to_upload_queue(self, datapoints: Union[IngestDatapoint, List[IngestDatapoint]]) -> None:
+    def add_to_upload_queue(self, datapoints: Union[IngestDatapoint, List[IngestDatapoint]]) -> None:  # type: ignore
         """
         Add data points to upload queue. The queue will be uploaded if the queue size is larger than the threshold
         specified in the __init__.
@@ -224,11 +240,11 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
             external_id: External ID of time series. Either this or external_id must be set.
             datapoints: List of data points to add
         """
-        old_len = len(datapoints)
+        old_len = len(datapoints) if isinstance(datapoints, List) else 1
         new_len = 0
         with self.lock:
             if not isinstance(datapoints, list):
-                datapoints=[datapoints]
+                datapoints = [datapoints]
             for dp in datapoints:
                 if dp.externalId is None:
                     dp.externalId = self.default_external_id
@@ -300,7 +316,11 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
                 raise ex
 
             # Get IDs of time series that exists, but failed because of the non-existing time series
-            retry_these = [id_dict["externalId"] for id_dict in ex.failed if id_dict not in ex.not_found and "externalId" in id_dict]
+            retry_these = [
+                id_dict["externalId"]
+                for id_dict in ex.failed
+                if id_dict not in ex.not_found and "externalId" in id_dict
+            ]
 
             # Get the time series that can be created
             create_these_ids = [id_dict["externalId"] for id_dict in ex.not_found if "externalId" in id_dict]
@@ -312,10 +332,7 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
 
             self.log_callback(self.log_level, f"Creating {len(create_these_ids)} time series")
             self.cdf_client.time_series.create(
-                [
-                    self._ts_factory(external_id, datapoints_lists[external_id])
-                    for external_id in create_these_ids
-                ]
+                [self._ts_factory(external_id, datapoints_lists[external_id]) for external_id in create_these_ids]
             )
 
             retry_these.extend([i for i in create_these_ids])
@@ -326,15 +343,11 @@ class TimeSeriesUploadQueue(AbstractUploadQueue):
                     self.log_level,
                     f"{len(ex.not_found) - len(create_these_ids)} time series not found, and could not be created automatically:\n"
                     + str(missing)
-                    + "\nData will be dropped"
+                    + "\nData will be dropped",
                 )
 
             # Remove entries with non-existing time series from upload queue
-            upload_this = [
-                entry
-                for entry in upload_this
-                if entry.get("externalId") in retry_these
-            ]
+            upload_this = [entry for entry in upload_this if entry.get("externalId") in retry_these]
 
             # Upload remaining
             self._upload_batch(upload_this, retries - 1)

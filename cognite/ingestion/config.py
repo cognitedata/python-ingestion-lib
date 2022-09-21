@@ -4,8 +4,10 @@ from typing import Optional, Union
 class ExternalId:
     external_id: str
 
+
 class InternalId:
     id: int
+
 
 class DataPointsDestination:
     data_set: Optional[Union[ExternalId, InternalId]]

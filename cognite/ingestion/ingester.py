@@ -1,9 +1,12 @@
 import threading
-import pyjq
 from typing import Any, Callable, Dict, Optional, Union
+
+import pyjq
 from cognite.client import CogniteClient
-from .config import DataPointsDestination, InternalId, ExternalId
+
+from .config import DataPointsDestination, ExternalId, InternalId
 from .queues import TimeSeriesUploadQueue
+
 
 class Ingester:
     def __init__(
@@ -26,7 +29,7 @@ class Ingester:
             self.transformation = pyjq.compile(query)
 
         if isinstance(config, DataPointsDestination):
-            data_set_id=self._get_data_set_id(config.data_set)
+            data_set_id = self._get_data_set_id(config.data_set)
             self.upload_queue = TimeSeriesUploadQueue(
                 cdf_client=self.cdf_client,
                 max_queue_size=config.max_queue_size,
@@ -36,7 +39,7 @@ class Ingester:
                 metrics_callback=self.metrics_callback,
                 data_set_id=data_set_id,
                 default_external_id=config.external_id,
-                cancelation_token=self.cancelation_token
+                cancelation_token=self.cancelation_token,
             )
 
     def ingest(self, input: Any):
@@ -47,4 +50,7 @@ class Ingester:
     def _get_data_set_id(self, id: Optional[Union[InternalId, ExternalId]]) -> Optional[int]:
         if id is None:
             return None
-        self.cdf_client.data_sets.retrieve(id=id.id, external_id=id.external_id).id
+        if isinstance(id, InternalId):
+            return id.id
+        else:
+            return self.cdf_client.data_sets.retrieve(external_id=id.external_id).id

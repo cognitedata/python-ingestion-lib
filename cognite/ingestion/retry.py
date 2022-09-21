@@ -12,7 +12,7 @@ logging_logger = logging.getLogger(__name__)
 def _retry_internal(
     f,
     cancelation_token: threading.Event = threading.Event(),
-    exceptions: Iterable[Type[Exception]] = Exception,
+    exceptions: Union[Type[Exception], Iterable[Type[Exception]]] = Exception,
     tries: int = -1,
     delay: float = 0,
     max_delay: Optional[float] = None,
@@ -24,7 +24,7 @@ def _retry_internal(
     while _tries and not cancelation_token.is_set():
         try:
             return f()
-        except exceptions as e:
+        except exceptions as e:  # type: ignore
             _tries -= 1
             if not _tries:
                 raise
@@ -46,7 +46,7 @@ def _retry_internal(
 
 def retry(
     cancelation_token: threading.Event = threading.Event(),
-    exceptions: Iterable[Type[Exception]] = Exception,
+    exceptions: Union[Type[Exception], Iterable[Type[Exception]]] = Exception,
     tries: int = -1,
     delay: float = 0,
     max_delay: Optional[float] = None,
