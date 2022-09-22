@@ -21,7 +21,7 @@ client = CogniteClient(
 
 with Ingester(
     'MyIngester',
-    '{"value":.value, "timestamp":.time, "externalId":.tagName}',
+    '. as $orig | .values[] as $arr | {"value": $arr.value, "timestamp": $arr.time, "externalId": $orig.tagName}',
     cdf_client=client,
     config=DataPointsDestination(
         max_queue_size=10_000,
@@ -32,8 +32,13 @@ with Ingester(
 ) as ingester:
     for i in range(100_000):
         data = {
-            "value": i,
-            "time": (datetime.now() + timedelta(seconds=i)).isoformat(),
+            "values": [{
+                "value": i*2,
+                "time": (datetime.now() + timedelta(seconds=i*2)).isoformat()
+            }, {
+                "value": i*2 + 1,
+                "time": (datetime.now() + timedelta(seconds=i*2 + 1)).isoformat()
+            }],
             "tagName": 'my-test-ts'
         }
         ingester.ingest(data)

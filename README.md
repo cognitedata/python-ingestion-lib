@@ -18,12 +18,12 @@ with Ingester(
     )
 ) as ingester:
     for i in range(100_000):
-        data = {
+        ingester.ingest({
             "value": i,
             "time": (datetime.now() + timedelta(seconds=i)).isoformat(),
             "tagName": 'my-test-ts'
-        }
-        ingester.ingest(data)
+        })
+        
 ```
 
 See `example.py` for a working example.
